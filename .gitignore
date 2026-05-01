@@ -11,10 +11,3 @@ __pycache__/
 
 # VS Code
 .vscode/
-
-# Plots
-*.png
-
-# JSON results
-test_results.json
-history.json
