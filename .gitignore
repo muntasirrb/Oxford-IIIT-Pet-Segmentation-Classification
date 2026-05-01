@@ -1,0 +1,20 @@
+# Dataset
+oxford-iiit-pets/
+
+# Checkpoints
+checkpoints_joint/
+*.pth
+
+# Python cache
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
+
+# Plots
+*.png
+
+# JSON results
+test_results.json
+history.json
