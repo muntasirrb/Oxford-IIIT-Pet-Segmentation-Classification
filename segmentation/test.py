@@ -1,0 +1,108 @@
+import sys
+import os
+import json
+import numpy as np
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+import torch
+from torch.amp import autocast
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
+
+from dataset import get_dataloaders
+from model  import UNetJoint
+from loss   import JointLoss
+from metrics import seg_metrics, cls_metrics
+
+
+CONFIG = {
+    "data_root"      : r"E:\test project\oxford-iiit-pets",
+    "image_size"     : 256,
+    "batch_size"     : 64,
+    "num_workers"    : 8,
+    "seg_classes"    : 2,
+    "num_breeds"     : 37,
+    "features"       : [64, 128, 256, 512],
+    "checkpoint_path": "./checkpoints_seg_only/best_model_seg.pth",
+    "checkpoint_dir" : "./checkpoints_seg_only",
+}
+
+
+def test():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    _, _, test_loader, _ = get_dataloaders(
+        data_root   = CONFIG["data_root"],
+        image_size  = CONFIG["image_size"],
+        batch_size  = CONFIG["batch_size"],
+        num_workers = CONFIG["num_workers"],
+    )
+
+    model = UNetJoint(
+        in_channels = 3,
+        seg_classes = CONFIG["seg_classes"],
+        num_breeds  = CONFIG["num_breeds"],
+        features    = CONFIG["features"],
+    ).to(device)
+
+    ckpt = torch.load(CONFIG["checkpoint_path"], map_location=device)
+    model.load_state_dict(ckpt["model_state"])
+    print(f"Loaded checkpoint from epoch {ckpt['epoch']} "
+          f"(val IoU={ckpt['val_iou']:.4f}  top1={ckpt['val_top1']:.4f})")
+
+    criterion = JointLoss()
+    model.eval()
+
+    total_loss  = 0.0
+    all_seg_pix, all_seg_iou, all_seg_dice = [], [], []
+    all_preds, all_targets = [], []
+    n = len(test_loader)
+
+    with torch.no_grad():
+        for i, (images, masks, breeds, _) in enumerate(test_loader):
+            images = images.to(device)
+            masks  = masks .to(device)
+            breeds = breeds.to(device)
+
+            with autocast("cuda"):
+                seg_out, cls_out   = model(images)
+                loss, _, _         = criterion(seg_out, cls_out, masks, breeds)
+
+            sm = seg_metrics(seg_out, masks)
+            cm = cls_metrics(cls_out, breeds)
+
+            total_loss     += loss.item()
+            all_seg_pix    .append(sm["pixel_acc"])
+            all_seg_iou    .append(sm["mean_iou"])
+            all_seg_dice   .append(sm["dice"])
+            all_preds      .extend(cm["preds"])
+            all_targets    .extend(cm["targets"])
+
+            print(f"  [{i+1}/{n}]  loss={total_loss/(i+1):.4f}  "
+                  f"iou={np.mean(all_seg_iou):.4f}  "
+                  f"top1={cm['top1']:.4f}", flush=True)
+
+    all_preds   = np.array(all_preds)
+    all_targets = np.array(all_targets)
+    cm_matrix   = confusion_matrix(all_targets, all_preds)
+
+    results = {
+        "test_loss"     : total_loss / n,
+        "test_pixel_acc": float(np.mean(all_seg_pix)),
+        "test_iou"      : float(np.mean(all_seg_iou)),
+        "test_dice"     : float(np.mean(all_seg_dice)),
+        }
+
+    results_path = os.path.join(CONFIG["checkpoint_dir"], "test_results.json")
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=4)
+
+    print(f"\n== Test Results (Segmentation Only) ==")
+    print(f"  Loss       : {results['test_loss']:.4f}")
+    print(f"  Pixel Acc  : {results['test_pixel_acc']:.4f}")
+    print(f"  Mean IoU   : {results['test_iou']:.4f}")
+    print(f"  Dice       : {results['test_dice']:.4f}")
+
+
+if __name__ == "__main__":
+    test()

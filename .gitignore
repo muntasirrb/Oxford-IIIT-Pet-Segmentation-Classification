@@ -1,9 +1,11 @@
 # Dataset
 oxford-iiit-pets/
 
-# Checkpoints
-checkpoints_joint/
-*.pth
+# Checkpoints — model weights only
+classification/checkpoints_cls_only/*.pth
+segmentation/checkpoints/*.pth
+segmentation/checkpoints_seg_only/*.pth
+joint training/checkpoints_joint/*.pth
 
 # Python cache
 __pycache__/
